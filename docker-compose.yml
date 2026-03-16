@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    ports:
+      - '9092:9092'
+    environment:
+      # Listeners for both host and docker network clients
+      KAFKA_LISTENERS: CONTROLLER://localhost:9091,HOST://0.0.0.0:9092,DOCKER://0.0.0.0:9093
+      #controller 9091 is node to node (broker to broker) comunication
+      # the other two are for clients (consumers/producers), one from host machine, other from other docker containers.
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,DOCKER:PLAINTEXT,HOST:PLAINTEXT
+
+      # KRaft settings
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9091
+
+      # Broker-to-broker communication (single node still needs it set)
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+
+      # Single-node replication factors
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1 #means no backup, just one copy.
+
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+
+    volumes:
+      - kafka_kraft:/var/lib/kafka/data
+  
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+  
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: ashraf
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: taskengine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana
+    ports:
+      - '3000:3000'
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  kafka_kraft:
+  redis_data:
+  postgres_data:
+  grafana_data:
