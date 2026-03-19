@@ -1,14 +1,6 @@
 import { Kafka, type Producer, type RecordMetadata } from 'kafkajs'; // grab the Kafka class from kafkajs
 import { v4 as uuidv4 } from 'uuid';
-
-
-type Order = {
- order_id: string
- user: string 
- item: string 
- quantity: number
- createdAt: string
-}
+import type { Order } from './types.js';
 
 // now we need to create a kafka instance and configure connection with kafka:
 const kafka = new Kafka({
