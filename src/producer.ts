@@ -57,7 +57,7 @@ async function main(){
    because Kafka only sends strings( or bytes). So, use JSON.stringify(order) to convert!
   */
  let res: RecordMetadata[] | undefined;
-  for(let i = 0; i < 200; i++){
+  for(let i = 0; i < 30; i++){
     const order = generateOrder();
 
     res =  await producer.send({
@@ -73,7 +73,7 @@ async function main(){
 
     console.log(`Sent order -> ${i}`, `Customer: ${order.user} & OrderId: ${order.order_id}`);
 
-    await sleep(100);
+    await sleep(200);
   } 
   console.log(res?.[0]?.baseOffset) // baseOffset is the first address of the batch.
   await producer.disconnect();
