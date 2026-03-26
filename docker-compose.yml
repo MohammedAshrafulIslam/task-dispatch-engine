@@ -62,6 +62,25 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
 
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    command: ['--kafka.server=kafka:9093']
+    ports:
+      - '9308:9308'
+    depends_on:
+      - kafka
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - kafka-exporter
+
 volumes:
   kafka_kraft:
   redis_data:
