@@ -1,0 +1,30 @@
+CRASH RECOVERY PROBLEM AND FIX
+
+PROBLEM
+- When a worker crashed mid-task, the task was left in PROCESSING in Postgres.
+- A new worker hit the Redis lock, logged "already claimed," and committed the Kafka offset.
+- Kafka then moved past the message, so it was never re-delivered.
+- Result: the task stayed stuck in PROCESSING forever.
+
+ROOT CAUSE
+- We treated a Redis lock miss as "safe to skip" and committed the offset.
+- That is unsafe when the lock holder is dead.
+- We also paused/resumed partitions without seeking back to the same offset.
+
+FIX
+- Add a DB lease (lease_until) in Postgres.
+- Claiming a task sets/renews lease_until. Takeover is allowed only if the lease is expired.
+- On Redis lock miss or failed DB claim, check task status:
+  - If COMPLETED or DLQ, commit offset and move on.
+  - If PROCESSING with an active lease, pause the partition and retry after lease expiry.
+  - On retry, seek to the same offset before resuming so the message is re-delivered.
+- Commit offsets only after writing COMPLETED or DLQ.
+
+RESULT
+- Crash recovery now succeeds: the stuck task is re-delivered after the lease expires.
+- No duplicate rows are written to Postgres.
+- No tasks remain stuck in PROCESSING after recovery completes.
+
+NOTES
+- Recovery time is bounded by the lease TTL (default 60s).
+- If you reduce the TTL, recovery is faster but you risk premature takeovers.
