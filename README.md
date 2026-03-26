@@ -4,6 +4,14 @@ An event-driven task dispatch system built with TypeScript. Tasks arrive as even
 
 Built as a capstone project for EECS4080.
 
+## Motivation
+
+I wanted a small system that still captures the hard parts of distributed systems: messages can be duplicated, workers can crash, and yet the result needs to be consistent. Keeping the domain simple (orders) lets me focus on reliability, recovery, and observability instead of app‑specific complexity.
+
+## High‑Level Idea
+
+Kafka is the inbox, Redis is the coordination lock, and Postgres is the source of truth for outcomes. Workers are stateless, so scaling is just adding more workers. Retries and a DLQ make failures visible instead of silent. The dashboard is there to show throughput, latency, and backlog as the system runs.
+
 ## How It Works
 
 ```
@@ -126,6 +134,10 @@ The producer sends 200 orders with 100ms delays. Workers will pick them up, and 
 ```sql
 SELECT * FROM task_outcomes WHERE status = 'DLQ';
 ```
+
+## Monitoring
+
+Open [localhost:3000](http://localhost:3000) to view the Grafana dashboard. It tracks throughput, latency, consumer lag, retry distribution, and work distribution by worker — all updated in real time.
 
 ## Tech Stack
 
