@@ -57,6 +57,8 @@ This spins up:
 - **Redis** on port 6379
 - **PostgreSQL** on port 5433 (user: `ashraf`, db: `taskengine`)
 - **Grafana** on port 3000
+- **Kafka Exporter** on port 9308 (Prometheus scrape target)
+- **Prometheus** on port 9090
 
 Install dependencies:
 
@@ -68,13 +70,15 @@ Create the `task_outcomes` table in PostgreSQL:
 
 ```sql
 CREATE TABLE task_outcomes (
-  task_id       TEXT PRIMARY KEY,
+  id            SERIAL PRIMARY KEY,
+  task_id       TEXT NOT NULL UNIQUE,
   worker_id     TEXT NOT NULL,
   status        TEXT NOT NULL,
   retries       INTEGER DEFAULT 0,
   error_message TEXT,
-  created_at    TIMESTAMPTZ,
-  processed_at  TIMESTAMPTZ
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  processed_at  TIMESTAMPTZ DEFAULT NOW(),
+  lease_until   TIMESTAMPTZ
 );
 ```
 
@@ -133,6 +137,52 @@ SELECT * FROM task_outcomes WHERE status = 'DLQ';
 | Persistence | PostgreSQL | Durable task outcome storage |
 | Containers | Docker Compose | Local infrastructure |
 | Monitoring | Grafana | Dashboard (port 3000) |
+| Metrics | Prometheus + Kafka Exporter | Lag + topic depth |
+
+## Data Model
+
+**Event schema (Kafka payload)**  
+The `Order` event is the contract between producer and workers:
+
+- `order_id` (string, unique task ID)
+- `user` (string)
+- `item` (string)
+- `quantity` (number)
+- `createdAt` (ISO timestamp)
+
+**Outcome ledger (PostgreSQL)**  
+`task_outcomes` stores the durable result of each task:
+
+- `task_id` (unique constraint for idempotency)
+- `status` (`PROCESSING`, `COMPLETED`, `DLQ`)
+- `retries`, `error_message`
+- `created_at`, `processed_at` (latency measurement)
+- `lease_until` (DB lease for crash recovery)
+
+## Kafka Metrics (Lag + Topic Depth)
+
+Prometheus scrapes Kafka Exporter for accurate queue depth and consumer lag metrics.
+
+Add Prometheus as a Grafana data source:
+- URL: `http://prometheus:9090`
+
+Example Prometheus queries:
+
+**Total consumer lag (queue depth)**:
+```
+sum(kafka_consumergroup_lag{consumergroup="order-tracker"})
+```
+
+**DLQ topic depth (approximate total messages)**:
+```
+sum(kafka_topic_partition_current_offset{topic="orders-dlq"})
+```
+
+If you want depth relative to retention:
+```
+sum(kafka_topic_partition_current_offset{topic="orders-dlq"})
+- sum(kafka_topic_partition_oldest_offset{topic="orders-dlq"})
+```
 
 ## Idempotency
 
