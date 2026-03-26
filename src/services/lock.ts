@@ -1,7 +1,7 @@
 import { redis } from '../redis.js';
 
 // ─── Configuration ───
-const LEASE_TTL_MS = 60000; // 60 seconds
+export const LEASE_TTL_MS = 60000; // 60 seconds
 
 /**
  * Try to claim an order using Redis.

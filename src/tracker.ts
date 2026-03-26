@@ -1,8 +1,8 @@
 import { redis } from './redis.js';
 import { consumer, dlqProducer } from './kafka.js';
 import type { Order } from './types.js';
-import { tryClaimOrder, releaseLease } from './services/lock.js';
-import { claimTask, markCompleted, markDlq } from './services/store.js';
+import { tryClaimOrder, releaseLease, LEASE_TTL_MS } from './services/lock.js';
+import { claimTask, getTaskState, markCompleted, markDlq } from './services/store.js';
 import { processWithRetry, MAX_RETRIES } from './services/processor.js';
 
 // Giving this worker a unique ID
@@ -16,6 +16,30 @@ async function commitOffset(topic: string, partition: number, offset: string): P
       offset: (Number(offset) + 1).toString(),
     },
   ]);
+}
+
+function scheduleRetry(
+  topic: string,
+  partition: number,
+  offset: string,
+  leaseUntil: string | null,
+  orderId: string,
+): void {
+  const now = Date.now();
+  const leaseExpiry = leaseUntil ? new Date(leaseUntil).getTime() : NaN;
+  const leaseMs = Number.isFinite(leaseExpiry) ? leaseExpiry - now : LEASE_TTL_MS;
+  const delayMs = Math.max(leaseMs + 1000, 1000);
+
+  console.log(
+    `[${WORKER_ID}] Pausing partition ${partition} for ${delayMs}ms (order ${orderId})`,
+  );
+  consumer.pause([{ topic, partitions: [partition] }]);
+
+  setTimeout(() => {
+    consumer.seek({ topic, partition, offset });
+    console.log(`[${WORKER_ID}] Resuming partition ${partition} (order ${orderId})`);
+    consumer.resume([{ topic, partitions: [partition] }]);
+  }, delayMs);
 }
 
 /**
@@ -49,7 +73,7 @@ async function main() {
   //  order tracker (consumer) is subscribing to the topic to get updates whenever there is a new order (event/message)
   await consumer.subscribe({
     topic: 'orders',
-    fromBeginning: true,
+    fromBeginning: false,
   });
 
   console.log(`[${WORKER_ID}] Consumer running, subscribed to orders topic`);
@@ -81,17 +105,30 @@ async function main() {
       // 3) Redis coordination — try to claim this order
       const lockAcquired = await tryClaimOrder(order.order_id, WORKER_ID);
       if (!lockAcquired) {
-        console.log(`[${WORKER_ID}] Order ${order.order_id} already claimed, skipping`);
-        // Commit offset — the lease-holding worker is responsible for this task
-        await commitOffset(topic, partition, message.offset);
+        const taskState = await getTaskState(order.order_id);
+        if (taskState?.status === 'COMPLETED' || taskState?.status === 'DLQ') {
+          console.log(`[${WORKER_ID}] Order ${order.order_id} already finalized, skipping`);
+          await commitOffset(topic, partition, message.offset);
+          return;
+        }
+
+        console.log(`[${WORKER_ID}] Order ${order.order_id} is in-flight, waiting for lease`);
+        scheduleRetry(topic, partition, message.offset, taskState?.lease_until ?? null, order.order_id);
         return;
       }
 
       try {
         const claimedInDb = await claimTask(order, WORKER_ID);
         if (!claimedInDb) {
-          console.log(`[${WORKER_ID}] Order ${order.order_id} already finalized, skipping`);
-          await commitOffset(topic, partition, message.offset);
+          const taskState = await getTaskState(order.order_id);
+          if (taskState?.status === 'COMPLETED' || taskState?.status === 'DLQ') {
+            console.log(`[${WORKER_ID}] Order ${order.order_id} already finalized, skipping`);
+            await commitOffset(topic, partition, message.offset);
+            return;
+          }
+
+          console.log(`[${WORKER_ID}] Order ${order.order_id} is in-flight, waiting for lease`);
+          scheduleRetry(topic, partition, message.offset, taskState?.lease_until ?? null, order.order_id);
           return;
         }
 
